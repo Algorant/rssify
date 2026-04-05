@@ -1,0 +1,17 @@
+[package]
+name = "rssify"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "*"
+chrono = { version = "*", features = ["serde"] }
+clap = { version = "*", features = ["derive"] }
+feed-rs = "*"
+quick-xml = "*"
+reqwest = { version = "*", default-features = false, features = ["blocking", "rustls-tls"] }
+duckdb = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+tracing = "*"
+tracing-subscriber = { version = "*", features = ["fmt", "env-filter"] }

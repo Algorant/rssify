@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+        <opml version="1.0">
+            <head>
+                <title>Pocket Casts Feeds</title>
+            </head>
+            <body>
+                <outline text="feeds">
+                    
+                                <outline
+                                    xmlUrl="https://rss.art19.com/tim-ferriss-show"
+                                    type="rss"
+                                    text="The Tim Ferriss Show"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://serve.podhome.fm/rss/7cd0202b-463c-5b2e-b252-d4845cb71466"
+                                    type="rss"
+                                    text="Bitcoin.Review Podcast with NVK &amp; Guests"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://rss.libsyn.com/shows/137081/destinations/850607.xml"
+                                    type="rss"
+                                    text="Conversations with Tyler"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://feeds.transistor.fm/a-life-engineered"
+                                    type="rss"
+                                    text="A Life Engineered"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://serve.podhome.fm/rss/c90e609a-df1e-596a-bd5e-57bcc8aad6cc"
+                                    type="rss"
+                                    text="Citadel Dispatch"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://feeds.megaphone.fm/GLT6907573392"
+                                    type="rss"
+                                    text="The Rest Is Science"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://harrisfootball.supportingcast.fm/content/eyJ0IjoicCIsImMiOiIyMDEyNCIsInUiOiIyMzg5MzU4IiwiZCI6IjE3NTM3MjY4NDUiLCJrIjoxMDQ1NH18NzExYWQwOGRmNjdlNmVmZDFjMmU0MDQ5NDAxMjUwNjVlYTAzMzNkMzNlMGFkZDFhNTc0YmQ3Y2Q2MDJmNTExZA.rss"
+                                    type="rss"
+                                    text="Harris Fantasy Football Podcast - Yacht Club"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://apple.dwarkesh-podcast.workers.dev/feed.rss"
+                                    type="rss"
+                                    text="Dwarkesh Podcast"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://lexfridman.com/feed/podcast/"
+                                    type="rss"
+                                    text="Lex Fridman Podcast"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://feeds.libsyn.com/435021/rss"
+                                    type="rss"
+                                    text="Living the Stream - Fantasy Football Podcast"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://feeds.megaphone.fm/GLT1412515089"
+                                    type="rss"
+                                    text="The Joe Rogan Experience"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://rss.making-sense.samharris.org/feed/?token=5a3c73cf-a8ab-4720-b5ea-adcc6e8483d3"
+                                    type="rss"
+                                    text="Making Sense with Sam Harris - Subscriber Content"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://rss.libsyn.com/shows/85177/destinations/408828.xml"
+                                    type="rss"
+                                    text="Alzabo Soup"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://rss.libsyn.com/shows/166112/destinations/1103966.xml"
+                                    type="rss"
+                                    text="Naval"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://unsupervisedlearning.libsyn.com/rss"
+                                    type="rss"
+                                    text="Razib Khan&#39;s Unsupervised Learning"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://anchor.fm/s/73801358/podcast/rss"
+                                    type="rss"
+                                    text="The Network State Podcast"
+                                />
+                            
+
+                                <outline
+                                    xmlUrl="https://rss.libsyn.com/shows/214379/destinations/1552766.xml"
+                                    type="rss"
+                                    text="On The Brink with Castle Island"
+                                />
+                            
+                </outline>
+            </body>
+        </opml>

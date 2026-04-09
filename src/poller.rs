@@ -1,12 +1,12 @@
 use crate::db::{Database, FeedRecord, NewEpisode};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use feed_rs::model::Entry;
-use quick_xml::Reader;
 use quick_xml::events::Event;
-use reqwest::StatusCode;
+use quick_xml::Reader;
 use reqwest::blocking::Client;
 use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED, USER_AGENT};
+use reqwest::StatusCode;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -199,14 +199,12 @@ fn poll_feed_once(
     let bytes = response
         .bytes()
         .with_context(|| format!("failed to read response body for {}", feed.url))?;
-    let feed_doc =
-        parse_feed_document(&bytes, feed).with_context(|| format!("failed to parse feed document for {}", feed.url)).map_err(|err| {
+    let feed_doc = parse_feed_document(&bytes, feed)
+        .with_context(|| format!("failed to parse feed document for {}", feed.url))
+        .map_err(|err| {
             let snapshot_path = save_failed_feed_body(feed, &bytes).ok();
             let error = match snapshot_path {
-                Some(path) => format!(
-                    "{err:#}; saved response snapshot to {}",
-                    path.display()
-                ),
+                Some(path) => format!("{err:#}; saved response snapshot to {}", path.display()),
                 None => format!("{err:#}"),
             };
             let _ = db.update_feed_fetch_error(feed.id, fetched_at, Some(status_code), &error);
@@ -246,8 +244,14 @@ fn store_entry(
     let title = entry.title.as_ref().map(|value| value.trim().to_owned());
     let summary = entry.summary.as_ref().map(|value| value.trim().to_owned());
     let link = entry.link.as_ref().map(|value| value.trim().to_owned());
-    let enclosure_url = entry.enclosure_url.as_ref().map(|value| value.trim().to_owned());
-    let artwork_url = entry.artwork_url.as_ref().map(|value| value.trim().to_owned());
+    let enclosure_url = entry
+        .enclosure_url
+        .as_ref()
+        .map(|value| value.trim().to_owned());
+    let artwork_url = entry
+        .artwork_url
+        .as_ref()
+        .map(|value| value.trim().to_owned());
     let published_at = entry.published_at;
     let published_at_raw = published_at.map(|value| value.to_rfc3339());
 
@@ -282,7 +286,7 @@ fn store_entry(
 
     Ok(match published_at {
         Some(published_at) => published_at >= baseline,
-        None => true,
+        None => fetched_at >= baseline,
     })
 }
 
@@ -297,11 +301,16 @@ fn parse_feed_document(bytes: &[u8], feed: &FeedRecord) -> Result<ParsedFeed> {
     let raw_feed = parse_rss_lossy(bytes).ok();
 
     match feed_rs::parser::parse(bytes) {
-        Ok(parsed) => Ok(merge_raw_metadata(parsed_feed_from_feed_rs(parsed), raw_feed)),
+        Ok(parsed) => Ok(merge_raw_metadata(
+            parsed_feed_from_feed_rs(parsed),
+            raw_feed,
+        )),
         Err(primary_err) => {
-            let lossy = raw_feed.ok_or_else(|| anyhow!(primary_err.to_string())).with_context(|| {
-                format!("feed-rs failed first for {}: {}", feed.url, primary_err)
-            })?;
+            let lossy = raw_feed
+                .ok_or_else(|| anyhow!(primary_err.to_string()))
+                .with_context(|| {
+                    format!("feed-rs failed first for {}: {}", feed.url, primary_err)
+                })?;
 
             if lossy.entries.is_empty() {
                 Err(anyhow!(primary_err))
@@ -359,11 +368,21 @@ fn merge_raw_metadata(mut parsed: ParsedFeed, raw: Option<ParsedFeed>) -> Parsed
 }
 
 fn entry_merge_key(entry: &ParsedEntry) -> Option<String> {
-    if let Some(guid) = entry.guid.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(guid) = entry
+        .guid
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         return Some(format!("guid:{guid}"));
     }
 
-    if let Some(link) = entry.link.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(link) = entry
+        .link
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         return Some(format!("link:{link}"));
     }
 
@@ -382,7 +401,11 @@ fn entry_merge_key(entry: &ParsedEntry) -> Option<String> {
 fn parsed_feed_from_feed_rs(feed: feed_rs::model::Feed) -> ParsedFeed {
     ParsedFeed {
         title: feed.title.map(|value| value.content),
-        entries: feed.entries.into_iter().map(parsed_entry_from_feed_rs).collect(),
+        entries: feed
+            .entries
+            .into_iter()
+            .map(parsed_entry_from_feed_rs)
+            .collect(),
         warning: None,
     }
 }
@@ -410,7 +433,10 @@ fn parsed_entry_from_feed_rs(entry: Entry) -> ParsedEntry {
             .map(|thumbnail| thumbnail.image.uri.clone()),
         duration_seconds: None,
         episode_number: None,
-        published_at: entry.published.or(entry.updated).map(|value| value.with_timezone(&Utc)),
+        published_at: entry
+            .published
+            .or(entry.updated)
+            .map(|value| value.with_timezone(&Utc)),
     }
 }
 
@@ -627,7 +653,7 @@ fn parse_duration_seconds(value: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParsedEntry, parse_duration_seconds, parse_feed_document, store_entry};
+    use super::{parse_duration_seconds, parse_feed_document, store_entry, ParsedEntry};
     use crate::db::{Database, FeedRecord};
     use chrono::{DateTime, Utc};
     use std::fs;
@@ -785,7 +811,6 @@ fn save_failed_feed_body(feed: &FeedRecord, bytes: &[u8]) -> Result<PathBuf> {
 
     let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
     let path = dir.join(format!("feed-{}-{}.xml", feed.id, timestamp));
-    fs::write(&path, bytes)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(path)
 }

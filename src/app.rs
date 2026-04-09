@@ -1,10 +1,15 @@
-use crate::cli::{Cli, Command, FeedSelectorArgs};
-use crate::db::Database;
+use crate::cli::{Cli, Command, FeedSelectorArgs, PreviewUpdateArgs};
+use crate::db::{Database, EpisodePreview};
 use crate::opml::parse_opml;
 use crate::poller::poll_all;
+use crate::render::{render_episode_text, render_preview_html};
+use crate::slack::SlackClient;
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
+use std::env;
+use std::fs;
+use std::path::Path;
 use tracing_subscriber::EnvFilter;
 
 pub fn run() -> Result<()> {
@@ -36,12 +41,17 @@ pub fn run() -> Result<()> {
             db.initialized_at()?;
             let feeds = parse_opml(&args.path)?;
             let now = Utc::now();
-            let mut imported = 0_i64;
-            for feed in feeds {
-                db.upsert_feed(&feed.xml_url, feed.title.as_deref(), now)?;
-                imported += 1;
-            }
-            println!("imported or updated {imported} feeds from {}", args.path.display());
+            let import_rows = feeds
+                .into_iter()
+                .map(|feed| (feed.xml_url, feed.title))
+                .collect::<Vec<_>>();
+            let summary = db.import_feeds(&import_rows, now)?;
+            println!(
+                "imported feeds from {}: inserted={}, updated={}",
+                args.path.display(),
+                summary.inserted,
+                summary.updated
+            );
         }
         Command::AddFeed(args) => {
             db.initialized_at()?;
@@ -66,11 +76,12 @@ pub fn run() -> Result<()> {
                     println!("url: {}", feed.url);
                     println!(
                         "last_successful_fetch_at: {}",
-                        feed.last_successful_fetch_at
-                            .as_deref()
-                            .unwrap_or("never")
+                        feed.last_successful_fetch_at.as_deref().unwrap_or("never")
                     );
-                    println!("last_error: {}", feed.last_error.as_deref().unwrap_or("none"));
+                    println!(
+                        "last_error: {}",
+                        feed.last_error.as_deref().unwrap_or("none")
+                    );
                     println!();
                 }
             }
@@ -96,9 +107,51 @@ pub fn run() -> Result<()> {
         Command::Poll => {
             db.initialized_at()?;
             let summary = poll_all(&db)?;
+            let mut delivered = 0_usize;
+            let webhook_url = cli
+                .slack_webhook_url
+                .clone()
+                .or_else(|| env::var("RSSIFY_SLACK_WEBHOOK_URL").ok());
+            if let Some(webhook_url) = webhook_url.as_deref() {
+                let slack = SlackClient::new(webhook_url)?;
+                let pending = db.pending_episode_notifications()?;
+
+                for episode in pending {
+                    let message = render_episode_text(&episode);
+                    slack.send_text(&message)?;
+                    db.mark_episode_notified(episode.episode_id, Utc::now())?;
+                    delivered += 1;
+                }
+            }
+
             println!(
-                "poll complete: checked={}, failed={}, new_episodes={}",
-                summary.feeds_checked, summary.feeds_failed, summary.new_episodes_found
+                "poll complete: checked={}, failed={}, new_episodes={}, posted={}",
+                summary.feeds_checked, summary.feeds_failed, summary.new_episodes_found, delivered
+            );
+        }
+        Command::PreviewUpdate(args) => {
+            db.initialized_at()?;
+            let preview = load_preview(&db, &args)?;
+            let Some(preview) = preview else {
+                println!("no matching episode preview found");
+                db.close()?;
+                return Ok(());
+            };
+
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&preview)?);
+            } else {
+                println!("{}", render_episode_text(&preview));
+            }
+        }
+        Command::PreviewHtml(args) => {
+            db.initialized_at()?;
+            let previews = db.recent_episode_previews(args.limit)?;
+            write_preview_html(&args.output, &previews)?;
+            println!(
+                "wrote preview HTML for {} episodes to {}",
+                previews.len(),
+                args.output.display()
             );
         }
         Command::Status(args) => {
@@ -116,17 +169,11 @@ pub fn run() -> Result<()> {
                 );
                 println!(
                     "last_poll_started_at: {}",
-                    summary
-                        .last_poll_started_at
-                        .as_deref()
-                        .unwrap_or("never")
+                    summary.last_poll_started_at.as_deref().unwrap_or("never")
                 );
                 println!(
                     "last_poll_completed_at: {}",
-                    summary
-                        .last_poll_completed_at
-                        .as_deref()
-                        .unwrap_or("never")
+                    summary.last_poll_completed_at.as_deref().unwrap_or("never")
                 );
                 println!(
                     "last_poll_new_episodes: {}",
@@ -147,9 +194,7 @@ pub fn run() -> Result<()> {
                     println!("  url: {}", feed.url);
                     println!(
                         "  last_successful_fetch_at: {}",
-                        feed.last_successful_fetch_at
-                            .as_deref()
-                            .unwrap_or("never")
+                        feed.last_successful_fetch_at.as_deref().unwrap_or("never")
                     );
                     println!(
                         "  last_error: {}",
@@ -178,6 +223,23 @@ fn remove_feed(db: &Database, args: &FeedSelectorArgs) -> Result<bool> {
         (None, Some(url)) => db.remove_feed_by_url(url),
         _ => anyhow::bail!("provide exactly one of --id or --url"),
     }
+}
+
+fn load_preview(db: &Database, args: &PreviewUpdateArgs) -> Result<Option<EpisodePreview>> {
+    match (args.feed_id, args.episode_id) {
+        (Some(feed_id), None) => db.latest_episode_preview_for_feed(feed_id),
+        (None, Some(episode_id)) => db.episode_preview_by_id(episode_id),
+        (None, None) => db.latest_episode_preview(),
+        _ => anyhow::bail!("provide at most one of --feed-id or --episode-id"),
+    }
+}
+
+fn write_preview_html(path: &Path, previews: &[EpisodePreview]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, render_preview_html(previews))?;
+    Ok(())
 }
 
 fn init_logging() {

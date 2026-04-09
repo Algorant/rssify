@@ -3,6 +3,8 @@ mod cli;
 mod db;
 mod opml;
 mod poller;
+mod render;
+mod slack;
 
 use anyhow::Result;
 

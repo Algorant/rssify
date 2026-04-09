@@ -6,7 +6,11 @@
 - DuckDB is the local state store.
 - The baseline for "new" content is the app initialization timestamp.
 - The first monitoring surface is terminal output and logs.
-- Slack delivery is planned later and should be one message per new episode.
+- Product goal: a simple local app that polls podcast feeds and posts nicely formatted new episodes to one Slack channel.
+- Slack delivery should be one message per new episode.
+- Store all discovered episodes, but only post episodes that are unposted and eligible relative to the one-time initialization baseline.
+- If an episode has no reliable `published_at`, treat it as new only when it was first seen after initialization.
+- Mark an episode as posted only after successful Slack delivery; failed sends must remain retryable.
 
 ## Feed Handling Notes
 

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<opml version="1.0">
+  <head>
+    <title>RSSify Test Feeds</title>
+  </head>
+  <body>
+    <outline text="feeds">
+      <outline
+        text="The Rest Is Science"
+        type="rss"
+        xmlUrl="https://feeds.megaphone.fm/GLT6907573392"
+      />
+    </outline>
+  </body>
+</opml>

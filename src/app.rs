@@ -86,6 +86,15 @@ pub fn run() -> Result<()> {
                 }
             }
         }
+        Command::EnableFeed(args) => {
+            db.initialized_at()?;
+            let enabled = enable_feed(&db, &args)?;
+            if enabled {
+                println!("feed enabled");
+            } else {
+                println!("no matching feed found");
+            }
+        }
         Command::DisableFeed(args) => {
             db.initialized_at()?;
             let disabled = disable_feed(&db, &args)?;
@@ -213,6 +222,14 @@ fn disable_feed(db: &Database, args: &FeedSelectorArgs) -> Result<bool> {
     match (&args.id, &args.url) {
         (Some(id), None) => db.disable_feed_by_id(*id),
         (None, Some(url)) => db.disable_feed_by_url(url),
+        _ => anyhow::bail!("provide exactly one of --id or --url"),
+    }
+}
+
+fn enable_feed(db: &Database, args: &FeedSelectorArgs) -> Result<bool> {
+    match (&args.id, &args.url) {
+        (Some(id), None) => db.enable_feed_by_id(*id),
+        (None, Some(url)) => db.enable_feed_by_url(url),
         _ => anyhow::bail!("provide exactly one of --id or --url"),
     }
 }

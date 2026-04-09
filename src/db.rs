@@ -237,10 +237,24 @@ impl Database {
         Ok(updated > 0)
     }
 
+    pub fn enable_feed_by_id(&self, id: i64) -> Result<bool> {
+        let updated = self
+            .conn
+            .execute("UPDATE feeds SET enabled = 1 WHERE id = ?1", params![id])?;
+        Ok(updated > 0)
+    }
+
     pub fn disable_feed_by_url(&self, url: &str) -> Result<bool> {
         let updated = self
             .conn
             .execute("UPDATE feeds SET enabled = 0 WHERE url = ?1", params![url])?;
+        Ok(updated > 0)
+    }
+
+    pub fn enable_feed_by_url(&self, url: &str) -> Result<bool> {
+        let updated = self
+            .conn
+            .execute("UPDATE feeds SET enabled = 1 WHERE url = ?1", params![url])?;
         Ok(updated > 0)
     }
 
@@ -1033,6 +1047,32 @@ mod tests {
         assert_eq!(feeds.len(), 1);
         assert_eq!(feeds[0].id, first_id);
         assert_eq!(feeds[0].title.as_deref(), Some("Updated"));
+
+        db.close().expect("db should close");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn enable_and_disable_feed_toggle_enabled_state() {
+        let path = temp_db_path("enable-disable-feed");
+
+        let db = Database::open(&path).expect("db should open");
+        db.initialize(Utc::now()).expect("init should succeed");
+        let feed_id = db
+            .upsert_feed("https://example.com/feed.xml", Some("Example"), Utc::now())
+            .expect("feed should insert");
+
+        assert!(db
+            .disable_feed_by_id(feed_id)
+            .expect("disable should succeed"));
+        let feeds = db.list_feeds().expect("feeds should load");
+        assert!(!feeds[0].enabled);
+
+        assert!(db
+            .enable_feed_by_url("https://example.com/feed.xml")
+            .expect("enable should succeed"));
+        let feeds = db.list_feeds().expect("feeds should reload");
+        assert!(feeds[0].enabled);
 
         db.close().expect("db should close");
         let _ = fs::remove_file(path);

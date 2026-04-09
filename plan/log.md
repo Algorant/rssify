@@ -1,5 +1,11 @@
 # RSSify Log
 
+## 2026-04-09
+
+- Simplified `README.md` to focus on the project scope, core commands, notification behavior, and optional preview tools.
+- Added `enable-feed` so feed management now supports import, add, list, enable, disable, and remove workflows directly in the CLI.
+- Verified the documented command set end to end against a fresh DuckDB database, including polling, status output, and preview generation.
+
 ## 2026-04-08
 
 - Refactored feed upserts to use explicit lookup/update/insert instead of DuckDB `ON CONFLICT` on `feeds`, preserving stable feed IDs when episodes already reference a feed.

@@ -14,8 +14,10 @@ use std::time::Duration;
 use tracing::warn;
 
 const LOSSY_ENTRY_LIMIT: usize = 200;
+const RAW_METADATA_MERGE_LIMIT: usize = 64;
 
 pub struct PollSummary {
+    pub run_id: i64,
     pub feeds_checked: i64,
     pub feeds_failed: i64,
     pub new_episodes_found: i64,
@@ -31,6 +33,7 @@ enum FeedPollOutcome {
 
 struct ParsedFeed {
     title: Option<String>,
+    artwork_url: Option<String>,
     entries: Vec<ParsedEntry>,
     warning: Option<String>,
 }
@@ -108,6 +111,7 @@ pub fn poll_all(db: &Database) -> Result<PollSummary> {
     )?;
 
     Ok(PollSummary {
+        run_id,
         feeds_checked: feeds.len() as i64,
         feeds_failed,
         new_episodes_found,
@@ -151,11 +155,15 @@ fn poll_feed_once(
     let fetched_at = Utc::now();
     let mut request = client.get(&feed.url).header(USER_AGENT, "rssify/0.1");
 
-    if let Some(etag) = &feed.etag {
-        request = request.header(IF_NONE_MATCH, etag);
-    }
-    if let Some(last_modified) = &feed.last_modified {
-        request = request.header(IF_MODIFIED_SINCE, last_modified);
+    // Force a full fetch until we've captured feed-level artwork at least once.
+    // After that, conditional GETs can resume normally.
+    if feed.feed_artwork_url.is_some() {
+        if let Some(etag) = &feed.etag {
+            request = request.header(IF_NONE_MATCH, etag);
+        }
+        if let Some(last_modified) = &feed.last_modified {
+            request = request.header(IF_MODIFIED_SINCE, last_modified);
+        }
     }
 
     let response = request
@@ -175,6 +183,7 @@ fn poll_feed_once(
                 .headers()
                 .get(LAST_MODIFIED)
                 .and_then(|v| v.to_str().ok()),
+            None,
             None,
         )?;
         return Ok(FeedPollOutcome::NotModified);
@@ -218,6 +227,7 @@ fn poll_feed_once(
         etag.as_deref(),
         last_modified.as_deref(),
         feed_doc.title.as_deref(),
+        feed_doc.artwork_url.as_deref(),
     )?;
 
     let mut new_count = 0_i64;
@@ -298,15 +308,23 @@ fn display_feed_name(feed: &FeedRecord) -> String {
 }
 
 fn parse_feed_document(bytes: &[u8], feed: &FeedRecord) -> Result<ParsedFeed> {
-    let raw_feed = parse_rss_lossy(bytes).ok();
-
     match feed_rs::parser::parse(bytes) {
-        Ok(parsed) => Ok(merge_raw_metadata(
-            parsed_feed_from_feed_rs(parsed),
-            raw_feed,
-        )),
+        Ok(parsed) => {
+            let entry_limit = parsed.entries.len().min(RAW_METADATA_MERGE_LIMIT);
+            let raw_feed = if entry_limit > 0 {
+                parse_rss_partial(bytes, entry_limit, false).ok()
+            } else {
+                None
+            };
+
+            Ok(merge_raw_metadata(
+                parsed_feed_from_feed_rs(parsed),
+                raw_feed,
+            ))
+        }
         Err(primary_err) => {
-            let lossy = raw_feed
+            let lossy = parse_rss_partial(bytes, LOSSY_ENTRY_LIMIT, true)
+                .ok()
                 .ok_or_else(|| anyhow!(primary_err.to_string()))
                 .with_context(|| {
                     format!("feed-rs failed first for {}: {}", feed.url, primary_err)
@@ -328,6 +346,9 @@ fn merge_raw_metadata(mut parsed: ParsedFeed, raw: Option<ParsedFeed>) -> Parsed
 
     if parsed.title.is_none() {
         parsed.title = raw.title;
+    }
+    if parsed.artwork_url.is_none() {
+        parsed.artwork_url = raw.artwork_url;
     }
     if parsed.warning.is_none() {
         parsed.warning = raw.warning;
@@ -401,6 +422,10 @@ fn entry_merge_key(entry: &ParsedEntry) -> Option<String> {
 fn parsed_feed_from_feed_rs(feed: feed_rs::model::Feed) -> ParsedFeed {
     ParsedFeed {
         title: feed.title.map(|value| value.content),
+        artwork_url: feed
+            .logo
+            .map(|logo| logo.uri.to_string())
+            .or_else(|| feed.icon.map(|icon| icon.uri.to_string())),
         entries: feed
             .entries
             .into_iter()
@@ -440,15 +465,21 @@ fn parsed_entry_from_feed_rs(entry: Entry) -> ParsedEntry {
     }
 }
 
-fn parse_rss_lossy(bytes: &[u8]) -> Result<ParsedFeed> {
+fn parse_rss_partial(
+    bytes: &[u8],
+    entry_limit: usize,
+    warn_on_entry_limit: bool,
+) -> Result<ParsedFeed> {
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().trim_text(true);
 
     let mut feed_title = None;
+    let mut feed_artwork_url = None;
     let mut entries = Vec::new();
     let mut current_item: Option<ParsedEntry> = None;
     let mut current_tag: Option<Vec<u8>> = None;
     let mut inside_item = false;
+    let mut inside_feed_image = false;
     let mut warning = None;
 
     loop {
@@ -470,11 +501,27 @@ fn parse_rss_lossy(bytes: &[u8]) -> Result<ParsedFeed> {
                             published_at: None,
                         });
                     }
+                    b"image" if !inside_item => {
+                        inside_feed_image = true;
+                    }
                     b"enclosure" if inside_item => {
                         if let Some(item) = current_item.as_mut() {
                             for attribute in event.attributes().flatten() {
                                 if attribute.key.as_ref() == b"url" {
                                     item.enclosure_url = Some(
+                                        attribute
+                                            .decode_and_unescape_value(reader.decoder())?
+                                            .into_owned(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    b"itunes:image" if !inside_item => {
+                        for attribute in event.attributes().flatten() {
+                            if attribute.key.as_ref() == b"href" {
+                                if feed_artwork_url.is_none() {
+                                    feed_artwork_url = Some(
                                         attribute
                                             .decode_and_unescape_value(reader.decoder())?
                                             .into_owned(),
@@ -529,6 +576,19 @@ fn parse_rss_lossy(bytes: &[u8]) -> Result<ParsedFeed> {
                             }
                         }
                     }
+                    b"itunes:image" if !inside_item => {
+                        for attribute in event.attributes().flatten() {
+                            if attribute.key.as_ref() == b"href" {
+                                if feed_artwork_url.is_none() {
+                                    feed_artwork_url = Some(
+                                        attribute
+                                            .decode_and_unescape_value(reader.decoder())?
+                                            .into_owned(),
+                                    );
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -539,6 +599,8 @@ fn parse_rss_lossy(bytes: &[u8]) -> Result<ParsedFeed> {
                     current_item.as_mut(),
                     current_tag.as_deref(),
                     inside_item,
+                    inside_feed_image,
+                    &mut feed_artwork_url,
                     &value,
                 );
             }
@@ -549,20 +611,27 @@ fn parse_rss_lossy(bytes: &[u8]) -> Result<ParsedFeed> {
                     current_item.as_mut(),
                     current_tag.as_deref(),
                     inside_item,
+                    inside_feed_image,
+                    &mut feed_artwork_url,
                     &value,
                 );
             }
             Ok(Event::End(event)) => {
                 match event.name().as_ref() {
+                    b"image" if !inside_item => {
+                        inside_feed_image = false;
+                    }
                     b"item" => {
                         inside_item = false;
                         if let Some(item) = current_item.take() {
                             entries.push(item);
-                            if entries.len() >= LOSSY_ENTRY_LIMIT {
-                                warning = Some(format!(
-                                    "lossy parser stopped after {} recent entries",
-                                    entries.len()
-                                ));
+                            if entry_limit > 0 && entries.len() >= entry_limit {
+                                if warn_on_entry_limit {
+                                    warning = Some(format!(
+                                        "lossy parser stopped after {} recent entries",
+                                        entries.len()
+                                    ));
+                                }
                                 break;
                             }
                         }
@@ -586,6 +655,7 @@ fn parse_rss_lossy(bytes: &[u8]) -> Result<ParsedFeed> {
 
     Ok(ParsedFeed {
         title: feed_title,
+        artwork_url: feed_artwork_url,
         entries,
         warning,
     })
@@ -596,6 +666,8 @@ fn assign_text(
     current_item: Option<&mut ParsedEntry>,
     current_tag: Option<&[u8]>,
     inside_item: bool,
+    inside_feed_image: bool,
+    feed_artwork_url: &mut Option<String>,
     value: &str,
 ) {
     let Some(tag) = current_tag else {
@@ -625,6 +697,8 @@ fn assign_text(
         }
     } else if tag == b"title" && feed_title.is_none() {
         *feed_title = Some(value.to_owned());
+    } else if inside_feed_image && tag == b"url" && feed_artwork_url.is_none() {
+        *feed_artwork_url = Some(value.to_owned());
     }
 }
 
@@ -653,7 +727,9 @@ fn parse_duration_seconds(value: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_duration_seconds, parse_feed_document, store_entry, ParsedEntry};
+    use super::{
+        parse_duration_seconds, parse_feed_document, parse_rss_partial, store_entry, ParsedEntry,
+    };
     use crate::db::{Database, FeedRecord};
     use chrono::{DateTime, Utc};
     use std::fs;
@@ -694,6 +770,60 @@ mod tests {
         assert_eq!(parsed.entries[0].guid.as_deref(), Some("ep-2479"));
         assert_eq!(parsed.entries[1].guid.as_deref(), Some("ep-2478"));
         assert!(parsed.warning.is_some());
+    }
+
+    #[test]
+    fn bounded_metadata_parse_does_not_emit_lossy_warning() {
+        let rss = br#"
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Example Feed</title>
+    <item>
+      <title>Episode One</title>
+      <guid>ep-1</guid>
+      <pubDate>Fri, 03 Apr 2026 17:00:00 -0000</pubDate>
+      <itunes:duration>123</itunes:duration>
+    </item>
+  </channel>
+</rss>
+        "#;
+
+        let parsed = parse_rss_partial(rss, 1, false).expect("metadata parse should succeed");
+        assert_eq!(parsed.entries.len(), 1);
+        assert!(parsed.warning.is_none());
+    }
+
+    #[test]
+    fn parse_feed_document_keeps_feed_and_episode_artwork_separate() {
+        let feed = dummy_feed();
+        let rss = br#"
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Example Feed</title>
+    <itunes:image href="https://example.com/feed-art.jpg" />
+    <item>
+      <title>Episode One</title>
+      <guid>ep-1</guid>
+      <pubDate>Fri, 03 Apr 2026 17:00:00 -0000</pubDate>
+      <itunes:image href="https://example.com/episode-art.jpg" />
+    </item>
+  </channel>
+</rss>
+        "#;
+
+        let parsed = parse_feed_document(rss, &feed).expect("feed should parse");
+
+        assert_eq!(
+            parsed.artwork_url.as_deref(),
+            Some("https://example.com/feed-art.jpg")
+        );
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(
+            parsed.entries[0].artwork_url.as_deref(),
+            Some("https://example.com/episode-art.jpg")
+        );
     }
 
     #[test]
@@ -750,6 +880,7 @@ mod tests {
             etag: None,
             last_modified: None,
             last_feed_title: None,
+            feed_artwork_url: None,
         }
     }
 

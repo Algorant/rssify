@@ -1,5 +1,14 @@
 # RSSify Log
 
+## 2026-04-10
+
+- Stabilized the Slack Block Kit message template as the default notification format.
+- Kept feed artwork and episode artwork separate in storage and rendering, with podcast artwork near the top of the post and episode artwork after the description.
+- Hardened Slack summary rendering by converting HTML-heavy feed descriptions to plain text and trimming long sponsor/footer sections before posting.
+- Added a divider block between episode posts and validated the format against real episodes from multiple podcasts.
+- Added a dedicated `preview-feed-artwork` command and HTML page to inspect feed artwork coverage across all subscriptions.
+- Documented the current Slack rendering behavior and noted that exact image sizing is not configurable in Slack Block Kit without a separate image-normalization pipeline.
+
 ## 2026-04-09
 
 - Simplified `README.md` to focus on the project scope, core commands, notification behavior, and optional preview tools.

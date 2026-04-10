@@ -1,7 +1,14 @@
 ## Next Steps
+- Expand `status` so it shows delivery counts, pending vs posted episodes, and the latest poll-run summary in both human-readable and JSON output
+- Make the current Slack Block Kit layout the permanent default and clean up any remaining temporary or test-oriented rough edges
+- Keep feed artwork and episode artwork separate in the data model and message renderer
+- Preserve the current Slack layout: podcast info near the top, episode description in the middle, episode artwork after the description, and a visible divider between posts
+- Harden summary rendering for HTML-heavy feeds so links, sponsor sections, and long descriptions do not break Slack formatting
+- Keep feed artwork backfill behavior in place so feeds missing artwork are fully populated after polling
+- Re-test the permanent Slack message template with real episodes from multiple podcasts and confirm the format is stable
+- Revisit image standardization later with an explicit image-normalization pipeline if Slack presentation still feels too inconsistent
 - Verify the core feed-management workflow end to end: import OPML, add-feed, list-feeds, disable-feed, remove-feed, and repeat import/update behavior
 - Verify the poll cycle end to end against real feeds: fetch enabled feeds, store episodes, dedupe correctly, and preserve baseline behavior
-- Validate Slack posting in a real channel and refine the message format if needed
 - Ensure Slack send failures are logged clearly and leave episodes unposted for the next scheduled run, with no in-process retries
 - Add a small status view for delivery state such as pending vs posted episodes if it proves useful operationally
 - Evaluate the simplest production runtime for scheduled polling and Slack posting, likely cron, a worker, or Lambda-style execution with reliable DuckDB persistence

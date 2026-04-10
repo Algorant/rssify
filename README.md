@@ -78,12 +78,30 @@ Poll feeds and post to Slack:
 ./target/debug/rssify poll --slack-webhook-url https://hooks.slack.com/services/...
 ```
 
-Or:
+Or set the webhook as an environment variable:
 
 ```bash
 export RSSIFY_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ./target/debug/rssify poll
 ```
+
+For local development, you can also place the webhook in a `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and run:
+
+```bash
+./target/debug/rssify poll
+```
+
+Notes:
+
+- `.env` is for local development convenience and should not be committed.
+- deployed environments should provide `RSSIFY_SLACK_WEBHOOK_URL` as a real environment variable.
+- treat the webhook URL like a secret; Slack may revoke leaked webhook URLs.
 
 Check status:
 
@@ -101,6 +119,21 @@ Check status:
 - Episodes are marked as posted only after Slack delivery succeeds.
 - If Slack delivery fails, RSSify logs the failure and leaves the episode unposted for a later scheduled run.
 
+## Slack Format
+
+- Slack posts use Block Kit.
+- Feed artwork and episode artwork are stored separately and rendered separately.
+- The post layout is:
+  - podcast name and episode title at the top
+  - metadata line with episode number, duration, and date
+  - podcast thumbnail near the top when available
+  - episode links
+  - cleaned summary text
+  - episode artwork after the description when available
+  - `via RSSify` footer and a divider block for separation between posts
+- HTML-heavy summaries are converted to plain text and trimmed so sponsor blocks, long footers, and extra links do not spill into the footer.
+- Slack Block Kit does not provide exact width or height controls for images, so image sizing is constrained by Slack's client rendering. If stricter visual consistency is needed later, that will require a separate image-normalization pipeline.
+
 ## Optional Preview Tools
 
 Preview a single stored episode update in the terminal:
@@ -116,4 +149,11 @@ Render recent stored episode updates as static HTML:
 ```bash
 ./target/debug/rssify preview-html
 ./target/debug/rssify preview-html --limit 10 --output artifacts/preview/my-updates.html
+```
+
+Render feed artwork coverage as static HTML:
+
+```bash
+./target/debug/rssify preview-feed-artwork
+./target/debug/rssify preview-feed-artwork --json | jq
 ```

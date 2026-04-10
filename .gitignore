@@ -1,1 +1,4 @@
 /target
+.env
+artifacts/*.duckdb
+artifacts/preview/*.html

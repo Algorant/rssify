@@ -30,6 +30,7 @@ pub struct FeedRecord {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub last_feed_title: Option<String>,
+    pub feed_artwork_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,11 +38,17 @@ pub struct StatusSummary {
     pub initialized_at: String,
     pub feed_count: i64,
     pub enabled_feed_count: i64,
+    pub feeds_with_errors_count: i64,
     pub episode_count: i64,
+    pub pending_episode_count: i64,
+    pub posted_episode_count: i64,
     pub unseen_since_baseline_count: i64,
     pub last_poll_started_at: Option<String>,
     pub last_poll_completed_at: Option<String>,
+    pub last_poll_feeds_checked: Option<i64>,
+    pub last_poll_feeds_failed: Option<i64>,
     pub last_poll_new_episodes: Option<i64>,
+    pub last_poll_posted_episodes: Option<i64>,
     pub feeds: Vec<FeedRecord>,
 }
 
@@ -51,6 +58,7 @@ pub struct EpisodePreview {
     pub feed_id: i64,
     pub feed_title: String,
     pub feed_url: String,
+    pub feed_artwork_url: Option<String>,
     pub episode_title: Option<String>,
     pub summary: Option<String>,
     pub link: Option<String>,
@@ -101,7 +109,8 @@ impl Database {
                 last_error TEXT,
                 etag TEXT,
                 last_modified TEXT,
-                last_feed_title TEXT
+                last_feed_title TEXT,
+                feed_artwork_url TEXT
             );
 
             CREATE TABLE IF NOT EXISTS episodes (
@@ -128,7 +137,8 @@ impl Database {
                 completed_at TEXT,
                 feeds_checked BIGINT NOT NULL DEFAULT 0,
                 feeds_failed BIGINT NOT NULL DEFAULT 0,
-                new_episodes_found BIGINT NOT NULL DEFAULT 0
+                new_episodes_found BIGINT NOT NULL DEFAULT 0,
+                posted_episodes BIGINT NOT NULL DEFAULT 0
             );
             ",
         )?;
@@ -287,7 +297,8 @@ impl Database {
                 last_error,
                 etag,
                 last_modified,
-                last_feed_title
+                last_feed_title,
+                feed_artwork_url
             FROM feeds
             ORDER BY id ASC
             ",
@@ -307,6 +318,7 @@ impl Database {
                 etag: row.get(9)?,
                 last_modified: row.get(10)?,
                 last_feed_title: row.get(11)?,
+                feed_artwork_url: row.get(12)?,
             })
         })?;
 
@@ -328,7 +340,8 @@ impl Database {
                 last_error,
                 etag,
                 last_modified,
-                last_feed_title
+                last_feed_title,
+                feed_artwork_url
             FROM feeds
             WHERE enabled = 1
             ORDER BY id ASC
@@ -349,6 +362,7 @@ impl Database {
                 etag: row.get(9)?,
                 last_modified: row.get(10)?,
                 last_feed_title: row.get(11)?,
+                feed_artwork_url: row.get(12)?,
             })
         })?;
 
@@ -394,6 +408,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_poll_run_posted_episodes(&self, run_id: i64, posted_episodes: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE poll_runs SET posted_episodes = ?2 WHERE id = ?1",
+            params![run_id, posted_episodes],
+        )?;
+        Ok(())
+    }
+
     pub fn update_feed_fetch_success(
         &self,
         feed_id: i64,
@@ -402,6 +424,7 @@ impl Database {
         etag: Option<&str>,
         last_modified: Option<&str>,
         feed_title: Option<&str>,
+        feed_artwork_url: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
             "
@@ -413,7 +436,8 @@ impl Database {
                 last_error = NULL,
                 etag = COALESCE(?4, etag),
                 last_modified = COALESCE(?5, last_modified),
-                last_feed_title = COALESCE(?6, last_feed_title)
+                last_feed_title = COALESCE(?6, last_feed_title),
+                feed_artwork_url = COALESCE(?7, feed_artwork_url)
             WHERE id = ?1
             ",
             params![
@@ -422,7 +446,8 @@ impl Database {
                 http_status,
                 etag,
                 last_modified,
-                feed_title
+                feed_title,
+                feed_artwork_url
             ],
         )?;
         Ok(())
@@ -496,10 +521,15 @@ impl Database {
                 .query_row("SELECT COUNT(*) FROM feeds WHERE enabled = 1", [], |row| {
                     row.get(0)
                 })?;
+        let feeds_with_errors_count = self.conn.query_row(
+            "SELECT COUNT(*) FROM feeds WHERE last_error IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
         let episode_count = self
             .conn
             .query_row("SELECT COUNT(*) FROM episodes", [], |row| row.get(0))?;
-        let unseen_since_baseline_count = self.conn.query_row(
+        let pending_episode_count = self.conn.query_row(
             "
             SELECT COUNT(*)
             FROM episodes
@@ -515,12 +545,17 @@ impl Database {
             [],
             |row| row.get(0),
         )?;
+        let posted_episode_count = self.conn.query_row(
+            "SELECT COUNT(*) FROM episodes WHERE notified_at IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
 
         let last_poll = self
             .conn
             .query_row(
                 "
-                SELECT started_at, completed_at, new_episodes_found
+                SELECT started_at, completed_at, feeds_checked, feeds_failed, new_episodes_found, posted_episodes
                 FROM poll_runs
                 ORDER BY id DESC
                 LIMIT 1
@@ -531,23 +566,38 @@ impl Database {
                         row.get::<_, Option<String>>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
                     ))
                 },
             )
             .optional()?;
 
-        let (last_poll_started_at, last_poll_completed_at, last_poll_new_episodes) =
-            last_poll.unwrap_or((None, None, None));
+        let (
+            last_poll_started_at,
+            last_poll_completed_at,
+            last_poll_feeds_checked,
+            last_poll_feeds_failed,
+            last_poll_new_episodes,
+            last_poll_posted_episodes,
+        ) = last_poll.unwrap_or((None, None, None, None, None, None));
 
         Ok(StatusSummary {
             initialized_at,
             feed_count,
             enabled_feed_count,
+            feeds_with_errors_count,
             episode_count,
-            unseen_since_baseline_count,
+            pending_episode_count,
+            posted_episode_count,
+            unseen_since_baseline_count: pending_episode_count,
             last_poll_started_at,
             last_poll_completed_at,
+            last_poll_feeds_checked,
+            last_poll_feeds_failed,
             last_poll_new_episodes,
+            last_poll_posted_episodes,
             feeds: self.list_feeds()?,
         })
     }
@@ -639,6 +689,8 @@ impl Database {
             "ALTER TABLE episodes ADD COLUMN IF NOT EXISTS artwork_url TEXT",
             "ALTER TABLE episodes ADD COLUMN IF NOT EXISTS duration_seconds BIGINT",
             "ALTER TABLE episodes ADD COLUMN IF NOT EXISTS episode_number BIGINT",
+            "ALTER TABLE feeds ADD COLUMN IF NOT EXISTS feed_artwork_url TEXT",
+            "ALTER TABLE poll_runs ADD COLUMN IF NOT EXISTS posted_episodes BIGINT DEFAULT 0",
         ] {
             self.conn.execute(ddl, [])?;
         }
@@ -672,6 +724,7 @@ fn episode_preview_select_sql() -> &'static str {
         f.id,
         COALESCE(f.title, f.last_feed_title, f.url) AS feed_title,
         f.url,
+        f.feed_artwork_url,
         e.title,
         e.summary,
         e.link,
@@ -692,15 +745,16 @@ fn map_episode_preview_row(row: &duckdb::Row<'_>) -> duckdb::Result<EpisodePrevi
         feed_id: row.get(1)?,
         feed_title: row.get(2)?,
         feed_url: row.get(3)?,
-        episode_title: row.get(4)?,
-        summary: row.get(5)?,
-        link: row.get(6)?,
-        enclosure_url: row.get(7)?,
-        artwork_url: row.get(8)?,
-        duration_seconds: row.get(9)?,
-        episode_number: row.get(10)?,
-        published_at: row.get(11)?,
-        first_seen_at: row.get(12)?,
+        feed_artwork_url: row.get(4)?,
+        episode_title: row.get(5)?,
+        summary: row.get(6)?,
+        link: row.get(7)?,
+        enclosure_url: row.get(8)?,
+        artwork_url: row.get(9)?,
+        duration_seconds: row.get(10)?,
+        episode_number: row.get(11)?,
+        published_at: row.get(12)?,
+        first_seen_at: row.get(13)?,
     })
 }
 
@@ -1073,6 +1127,88 @@ mod tests {
             .expect("enable should succeed"));
         let feeds = db.list_feeds().expect("feeds should reload");
         assert!(feeds[0].enabled);
+
+        db.close().expect("db should close");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn status_summary_includes_delivery_and_latest_poll_counts() {
+        let path = temp_db_path("status-summary-expanded");
+
+        let db = Database::open(&path).expect("db should open");
+        let baseline = DateTime::parse_from_rfc3339("2026-04-05T00:00:00Z")
+            .expect("timestamp should parse")
+            .with_timezone(&Utc);
+        db.initialize(baseline).expect("init should succeed");
+        let feed_id = db
+            .upsert_feed("https://example.com/feed.xml", Some("Example"), Utc::now())
+            .expect("feed should insert");
+
+        db.insert_episode_if_new(&NewEpisode {
+            feed_id,
+            dedupe_key: "pending-episode",
+            guid: Some("pending-episode"),
+            title: Some("Pending Episode"),
+            summary: None,
+            link: Some("https://example.com/pending"),
+            enclosure_url: None,
+            artwork_url: None,
+            duration_seconds: None,
+            episode_number: None,
+            published_at: Some("2026-04-06T00:00:00Z"),
+            first_seen_at: baseline,
+        })
+        .expect("pending episode should insert");
+
+        db.insert_episode_if_new(&NewEpisode {
+            feed_id,
+            dedupe_key: "posted-episode",
+            guid: Some("posted-episode"),
+            title: Some("Posted Episode"),
+            summary: None,
+            link: Some("https://example.com/posted"),
+            enclosure_url: None,
+            artwork_url: None,
+            duration_seconds: None,
+            episode_number: None,
+            published_at: Some("2026-04-07T00:00:00Z"),
+            first_seen_at: baseline,
+        })
+        .expect("posted episode should insert");
+
+        let posted_episode = db
+            .pending_episode_notifications()
+            .expect("pending notifications should load")
+            .into_iter()
+            .find(|episode| episode.episode_title.as_deref() == Some("Posted Episode"))
+            .expect("posted episode should be pending before marking");
+        db.mark_episode_notified(posted_episode.episode_id, Utc::now())
+            .expect("mark notified should succeed");
+
+        db.update_feed_fetch_error(feed_id, Utc::now(), Some(500), "boom")
+            .expect("feed error should update");
+
+        let run_id = db
+            .start_poll_run(Utc::now())
+            .expect("poll run should start");
+        db.finish_poll_run(run_id, Utc::now(), 4, 1, 2)
+            .expect("poll run should finish");
+        db.set_poll_run_posted_episodes(run_id, 1)
+            .expect("poll posted count should update");
+
+        let summary = db.status_summary().expect("status should load");
+        assert_eq!(summary.feed_count, 1);
+        assert_eq!(summary.enabled_feed_count, 1);
+        assert_eq!(summary.feeds_with_errors_count, 1);
+        assert_eq!(summary.episode_count, 2);
+        assert_eq!(summary.pending_episode_count, 1);
+        assert_eq!(summary.posted_episode_count, 1);
+        assert_eq!(summary.unseen_since_baseline_count, 1);
+        assert_eq!(summary.last_poll_feeds_checked, Some(4));
+        assert_eq!(summary.last_poll_feeds_failed, Some(1));
+        assert_eq!(summary.last_poll_new_episodes, Some(2));
+        assert_eq!(summary.last_poll_posted_episodes, Some(1));
 
         db.close().expect("db should close");
         let _ = fs::remove_file(path);

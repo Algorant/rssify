@@ -58,6 +58,8 @@ pub enum Command {
     PreviewUpdate(PreviewUpdateArgs),
     #[command(about = "Render recent stored episode updates as static HTML")]
     PreviewHtml(PreviewHtmlArgs),
+    #[command(about = "Render a static HTML page showing feed artwork coverage")]
+    PreviewFeedArtwork(PreviewFeedArtworkArgs),
     #[command(about = "Show overall database and feed status")]
     Status(StatusArgs),
 }
@@ -130,6 +132,19 @@ pub struct PreviewHtmlArgs {
     #[arg(
         long,
         default_value = "artifacts/preview/updates.html",
+        help = "Output HTML file path"
+    )]
+    pub output: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct PreviewFeedArtworkArgs {
+    #[arg(long, help = "Print feed artwork data as JSON")]
+    pub json: bool,
+
+    #[arg(
+        long,
+        default_value = "artifacts/preview/feed-artwork.html",
         help = "Output HTML file path"
     )]
     pub output: PathBuf,

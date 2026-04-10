@@ -11,7 +11,9 @@ feed-rs = "*"
 quick-xml = "*"
 reqwest = { version = "*", default-features = false, features = ["blocking", "rustls-tls"] }
 duckdb = "*"
+dotenvy = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
+html2text = "*"
 tracing = "*"
 tracing-subscriber = { version = "*", features = ["fmt", "env-filter"] }

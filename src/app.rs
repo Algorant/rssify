@@ -1,8 +1,10 @@
 use crate::cli::{Cli, Command, FeedSelectorArgs, PreviewUpdateArgs};
-use crate::db::{Database, EpisodePreview};
+use crate::db::{Database, EpisodePreview, FeedRecord};
 use crate::opml::parse_opml;
 use crate::poller::poll_all;
-use crate::render::{render_episode_text, render_preview_html};
+use crate::render::{
+    render_episode_text, render_feed_artwork_html, render_preview_html, render_slack_payload,
+};
 use crate::slack::SlackClient;
 use anyhow::Result;
 use chrono::Utc;
@@ -13,6 +15,7 @@ use std::path::Path;
 use tracing_subscriber::EnvFilter;
 
 pub fn run() -> Result<()> {
+    dotenvy::dotenv().ok();
     init_logging();
 
     let cli = Cli::parse();
@@ -126,12 +129,13 @@ pub fn run() -> Result<()> {
                 let pending = db.pending_episode_notifications()?;
 
                 for episode in pending {
-                    let message = render_episode_text(&episode);
-                    slack.send_text(&message)?;
+                    let payload = render_slack_payload(&episode);
+                    slack.send_payload(payload)?;
                     db.mark_episode_notified(episode.episode_id, Utc::now())?;
                     delivered += 1;
                 }
             }
+            db.set_poll_run_posted_episodes(summary.run_id, delivered as i64)?;
 
             println!(
                 "poll complete: checked={}, failed={}, new_episodes={}, posted={}",
@@ -163,31 +167,71 @@ pub fn run() -> Result<()> {
                 args.output.display()
             );
         }
+        Command::PreviewFeedArtwork(args) => {
+            db.initialized_at()?;
+            let feeds = db.list_feeds()?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&feeds)?);
+            } else {
+                write_feed_artwork_html(&args.output, &feeds)?;
+                println!(
+                    "wrote feed artwork preview for {} feeds to {}",
+                    feeds.len(),
+                    args.output.display()
+                );
+            }
+        }
         Command::Status(args) => {
             let summary = db.status_summary()?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&summary)?);
             } else {
                 println!("initialized_at: {}", summary.initialized_at);
-                println!("feeds: {}", summary.feed_count);
-                println!("enabled_feeds: {}", summary.enabled_feed_count);
-                println!("episodes: {}", summary.episode_count);
+                println!();
+                println!("Feeds");
+                println!("- total: {}", summary.feed_count);
+                println!("- enabled: {}", summary.enabled_feed_count);
+                println!("- with errors: {}", summary.feeds_with_errors_count);
+                println!();
+                println!("Episodes");
+                println!("- stored: {}", summary.episode_count);
+                println!("- pending: {}", summary.pending_episode_count);
+                println!("- posted: {}", summary.posted_episode_count);
+                println!();
+                println!("Last poll");
                 println!(
-                    "unseen_since_baseline: {}",
-                    summary.unseen_since_baseline_count
-                );
-                println!(
-                    "last_poll_started_at: {}",
+                    "- started: {}",
                     summary.last_poll_started_at.as_deref().unwrap_or("never")
                 );
                 println!(
-                    "last_poll_completed_at: {}",
+                    "- completed: {}",
                     summary.last_poll_completed_at.as_deref().unwrap_or("never")
                 );
                 println!(
-                    "last_poll_new_episodes: {}",
+                    "- feeds checked: {}",
+                    summary
+                        .last_poll_feeds_checked
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "n/a".to_string())
+                );
+                println!(
+                    "- feeds failed: {}",
+                    summary
+                        .last_poll_feeds_failed
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "n/a".to_string())
+                );
+                println!(
+                    "- new episodes: {}",
                     summary
                         .last_poll_new_episodes
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "n/a".to_string())
+                );
+                println!(
+                    "- posted: {}",
+                    summary
+                        .last_poll_posted_episodes
                         .map(|value| value.to_string())
                         .unwrap_or_else(|| "n/a".to_string())
                 );
@@ -256,6 +300,14 @@ fn write_preview_html(path: &Path, previews: &[EpisodePreview]) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::write(path, render_preview_html(previews))?;
+    Ok(())
+}
+
+fn write_feed_artwork_html(path: &Path, feeds: &[FeedRecord]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, render_feed_artwork_html(feeds))?;
     Ok(())
 }
 

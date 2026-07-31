@@ -95,7 +95,7 @@ pub fn render_slack_payload(preview: &EpisodePreview) -> Value {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": slack_escape_mrkdwn(&summary),
+                    "text": slack_escape_mrkdwn_with_limit(&summary, SLACK_SECTION_TEXT_LIMIT),
                 }
             }));
         }
@@ -418,9 +418,10 @@ fn render_summary_preview(summary: &str) -> String {
     split_summary_at_break(&normalized)
 }
 
-fn render_slack_summary(summary: &str) -> String {
-    const SLACK_SECTION_LIMIT: usize = 2800;
+const SLACK_SECTION_TEXT_LIMIT: usize = 3000;
+const SLACK_SUMMARY_SOFT_LIMIT: usize = 2800;
 
+fn render_slack_summary(summary: &str) -> String {
     let mut summary = render_summary_preview(summary);
 
     for marker in ["Sponsors", "Timestamps", "Get full access to"] {
@@ -430,8 +431,8 @@ fn render_slack_summary(summary: &str) -> String {
         }
     }
 
-    if summary.chars().count() > SLACK_SECTION_LIMIT {
-        let truncated: String = summary.chars().take(SLACK_SECTION_LIMIT).collect();
+    if summary.chars().count() > SLACK_SUMMARY_SOFT_LIMIT {
+        let truncated: String = summary.chars().take(SLACK_SUMMARY_SOFT_LIMIT).collect();
         summary = format!("{}...", truncated.trim_end());
     }
 
@@ -502,6 +503,43 @@ fn slack_escape_mrkdwn(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn slack_escape_mrkdwn_with_limit(value: &str, limit: usize) -> String {
+    let escaped = slack_escape_mrkdwn(value);
+    if escaped.chars().count() <= limit {
+        return escaped;
+    }
+
+    const ELLIPSIS: &str = "...";
+    let content_limit = limit.saturating_sub(ELLIPSIS.len());
+    let mut truncated = String::new();
+    let mut used = 0_usize;
+
+    for ch in value.chars() {
+        let escaped_ch = match ch {
+            '&' => "&amp;",
+            '<' => "&lt;",
+            '>' => "&gt;",
+            _ => {
+                if used + 1 > content_limit {
+                    break;
+                }
+                truncated.push(ch);
+                used += 1;
+                continue;
+            }
+        };
+        let escaped_len = escaped_ch.chars().count();
+        if used + escaped_len > content_limit {
+            break;
+        }
+        truncated.push_str(escaped_ch);
+        used += escaped_len;
+    }
+
+    truncated.push_str(ELLIPSIS);
+    truncated
 }
 
 fn render_episode_card_html(preview: &EpisodePreview) -> String {
@@ -618,7 +656,7 @@ fn html_escape(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::render_slack_payload;
+    use super::{render_slack_payload, SLACK_SECTION_TEXT_LIMIT};
     use crate::db::EpisodePreview;
 
     #[test]
@@ -654,5 +692,34 @@ mod tests {
             blocks[4]["image_url"],
             "https://example.com/episode-art.jpg"
         );
+    }
+
+    #[test]
+    fn slack_summary_stays_within_section_limit_after_escaping() {
+        let preview = EpisodePreview {
+            episode_id: 1,
+            feed_id: 1,
+            feed_title: "Example Podcast".to_string(),
+            feed_url: "https://example.com/feed.xml".to_string(),
+            feed_artwork_url: None,
+            episode_title: Some("Ampersands".to_string()),
+            summary: Some("&".repeat(2800)),
+            link: None,
+            enclosure_url: None,
+            artwork_url: None,
+            duration_seconds: None,
+            episode_number: None,
+            published_at: Some("2026-04-08T23:05:00+00:00".to_string()),
+            first_seen_at: "2026-04-09T12:00:00+00:00".to_string(),
+        };
+
+        let payload = render_slack_payload(&preview);
+        let summary = payload["blocks"][1]["text"]["text"]
+            .as_str()
+            .expect("summary section text should exist");
+
+        assert!(summary.chars().count() <= SLACK_SECTION_TEXT_LIMIT);
+        assert!(summary.ends_with("..."));
+        assert!(!summary.ends_with("&am..."));
     }
 }

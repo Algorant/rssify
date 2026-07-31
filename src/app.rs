@@ -6,12 +6,14 @@ use crate::render::{
     render_episode_text, render_feed_artwork_html, render_preview_html, render_slack_payload,
 };
 use crate::slack::SlackClient;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use chrono::Utc;
 use clap::Parser;
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 pub fn run() -> Result<()> {
@@ -127,15 +129,59 @@ pub fn run() -> Result<()> {
             if let Some(webhook_url) = webhook_url.as_deref() {
                 let slack = SlackClient::new(webhook_url)?;
                 let pending = db.pending_episode_notifications()?;
+                let pending_count = pending.len();
+                let mut failed_deliveries = Vec::new();
 
-                for episode in pending {
+                for (index, episode) in pending.into_iter().enumerate() {
                     let payload = render_slack_payload(&episode);
-                    slack.send_payload(payload)?;
-                    db.mark_episode_notified(episode.episode_id, Utc::now())?;
-                    delivered += 1;
+                    match slack.send_payload(payload) {
+                        Ok(()) => {
+                            db.mark_episode_notified(episode.episode_id, Utc::now())?;
+                            delivered += 1;
+                        }
+                        Err(error) if error.to_string().contains("invalid_blocks") => {
+                            eprintln!(
+                                "Slack rejected blocks for episode {}; retrying as plain text",
+                                episode.episode_id
+                            );
+                            match slack.send_text(&render_episode_text(&episode)) {
+                                Ok(()) => {
+                                    db.mark_episode_notified(episode.episode_id, Utc::now())?;
+                                    delivered += 1;
+                                }
+                                Err(fallback_error) => {
+                                    eprintln!(
+                                        "Slack text fallback failed for episode {} after block error ({error:#}): {fallback_error:#}",
+                                        episode.episode_id
+                                    );
+                                    failed_deliveries.push(episode.episode_id);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "Slack delivery failed for episode {}: {error:#}",
+                                episode.episode_id
+                            );
+                            failed_deliveries.push(episode.episode_id);
+                        }
+                    }
+
+                    if index + 1 < pending_count {
+                        thread::sleep(Duration::from_secs(1));
+                    }
                 }
+
+                db.set_poll_run_posted_episodes(summary.run_id, delivered as i64)?;
+                if !failed_deliveries.is_empty() {
+                    bail!(
+                        "Slack delivery failed for {} episode(s); successful deliveries were recorded and failed episodes remain pending",
+                        failed_deliveries.len()
+                    );
+                }
+            } else {
+                db.set_poll_run_posted_episodes(summary.run_id, delivered as i64)?;
             }
-            db.set_poll_run_posted_episodes(summary.run_id, delivered as i64)?;
 
             println!(
                 "poll complete: checked={}, failed={}, new_episodes={}, posted={}",

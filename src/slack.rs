@@ -27,7 +27,6 @@ impl SlackClient {
         })
     }
 
-    #[cfg(test)]
     pub fn send_text(&self, text: &str) -> Result<()> {
         self.send_payload(serde_json::json!({ "text": text }))
     }

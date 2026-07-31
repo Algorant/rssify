@@ -1,5 +1,16 @@
 # RSSify Log
 
+## 2026-07-31
+
+- Diagnosed continued hourly feed polling with failed Slack delivery; the scheduler and webhook had not disconnected.
+- Fixed Slack section truncation so mrkdwn escaping cannot expand a message past Slack's 3,000-character Block Kit limit.
+- Changed delivery handling so one rejected episode does not block later pending episodes; successful sends are recorded, failed sends remain pending, and the poll still returns an error.
+- Added regression coverage for escape-expanded Slack summaries and validated the formerly rejected production payload at exactly 3,000 section characters.
+- Added one-second Slack delivery pacing and a plain-text retry when Slack rejects a rich Block Kit payload as `invalid_blocks`.
+- After operator approval, backed up the production DuckDB and delivered all pending notifications with the fixed release binary: 41 succeeded in the first run and the one remaining notification succeeded on retry. Pending count returned to zero.
+- After operator verification in Slack, deployed the fixed release binary to `/srv/rssify/rssify`, removed the legacy cron entry, and enabled the tracked cart-lab user-systemd timer.
+- Verified two controlled service runs with 17 feeds checked, zero feed failures, zero new episodes, zero posts, and zero pending notifications.
+
 ## 2026-04-10
 
 - Stabilized the Slack Block Kit message template as the default notification format.

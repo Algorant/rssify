@@ -21,10 +21,10 @@
 
 ## Doc Rules
 
-- Keep planning docs under [`plan/`](/home/ivan/dev/projects/rssify/plan).
-- [`plan/log.md`](/home/ivan/dev/projects/rssify/plan/log.md) is append-only in reverse chronological order: add new entries at the top, do not rewrite history unless correcting a factual mistake.
-- [`plan/log.md`](/home/ivan/dev/projects/rssify/plan/log.md) is for completed changes, decisions, and notable issues.
-- [`plan/todo.md`](/home/ivan/dev/projects/rssify/plan/todo.md) is for remaining work only and should be updated as tasks are completed or added.
+- Keep planning docs under [`plan/`](/home/ivan/projects/rssify/plan).
+- [`plan/log.md`](/home/ivan/projects/rssify/plan/log.md) is append-only in reverse chronological order: add new entries at the top, do not rewrite history unless correcting a factual mistake.
+- [`plan/log.md`](/home/ivan/projects/rssify/plan/log.md) is for completed changes, decisions, and notable issues.
+- [`plan/todo.md`](/home/ivan/projects/rssify/plan/todo.md) is for remaining work only and should be updated as tasks are completed or added.
 
 ## Usage Preference
 

@@ -1,4 +1,4 @@
-# Cron Deployment Plan
+# Scheduled Deployment Plan
 
 ## Goal
 
@@ -77,9 +77,9 @@ set +a
 /srv/rssify/rssify --db-path /srv/rssify/rssify.duckdb poll
 ```
 
-## Cron Job
+## Legacy Cron Job
 
-Run the poll at the top of every hour:
+The first production deployment used this hourly cron entry:
 
 ```cron
 0 * * * * /bin/sh -lc 'set -a; . /srv/rssify/.env; set +a; /srv/rssify/rssify --db-path /srv/rssify/rssify.duckdb poll >> /srv/rssify/logs/cron.log 2>&1'
@@ -115,10 +115,14 @@ Re-import feeds after OPML changes:
 - If the DB is locked, check for another running RSSify process or an open `duckdb` shell session.
 - Back up `rssify.duckdb` if the feed and episode history matter.
 
-## Future Upgrade Path
+## Current cart-lab operations
 
-If cron becomes too limited later, the easiest upgrade is probably:
+The production host now tracks the preferred user-systemd service, timer, lock, health checks, deploy command, and guarded restart in `/home/ivan/cart-lab`:
 
-- `systemd` service + timer on the same server
+```bash
+cd /home/ivan/cart-lab
+tools/rssify status
+tools/rssify logs
+```
 
-That keeps the same binary, `.env`, and DuckDB layout while giving better supervision and logs.
+Follow `docs/services/rssify.md` in cart-lab. Do not migrate the legacy cron entry or restart delivery until any held Slack backlog has an explicit disposition. The cart-lab timer keeps the same binary, `.env`, and DuckDB layout while adding supervision, structured journal logs, missed-run recovery, a single-run lock, and a large-backlog guard.
